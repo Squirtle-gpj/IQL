@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import os
 import gym
 import d4rl
 import numpy as np
@@ -9,7 +10,8 @@ from tqdm import trange
 from src.iql import ImplicitQLearning
 from src.policy import GaussianPolicy, DeterministicPolicy
 from src.value_functions import TwinQ, ValueFunction
-from src.util import return_range, set_seed, Log, sample_batch, torchify, evaluate_policy
+from src.util import return_range, set_seed, sample_batch, torchify, evaluate_policy
+
 
 
 def get_env_and_dataset(log, env_name, max_episode_steps):
@@ -18,7 +20,7 @@ def get_env_and_dataset(log, env_name, max_episode_steps):
 
     if any(s in env_name for s in ('halfcheetah', 'hopper', 'walker2d')):
         min_ret, max_ret = return_range(dataset, max_episode_steps)
-        log(f'Dataset returns have range [{min_ret}, {max_ret}]')
+        print(f'Dataset returns have range [{min_ret}, {max_ret}]')
         dataset['rewards'] /= (max_ret - min_ret)
         dataset['rewards'] *= max_episode_steps
     elif 'antmaze' in env_name:
@@ -30,24 +32,26 @@ def get_env_and_dataset(log, env_name, max_episode_steps):
     return env, dataset
 
 
-def main(args):
-    torch.set_num_threads(1)
-    log = Log(Path(args.log_dir)/args.env_name, vars(args))
-    log(f'Log dir: {log.dir}')
+def main(config):
 
-    env, dataset = get_env_and_dataset(log, args.env_name, args.max_episode_steps)
+
+    torch.set_num_threads(1)
+    #log = Log(Path(args.log_dir)/args.env_name, vars(args))
+    #log(f'Log dir: {log.dir}')
+
+    env, dataset = get_env_and_dataset(log, config.env_name, config.max_episode_steps)
     obs_dim = dataset['observations'].shape[1]
     act_dim = dataset['actions'].shape[1]   # this assume continuous actions
-    set_seed(args.seed, env=env)
+    set_seed(config.seed, env=env)
 
-    if args.deterministic_policy:
-        policy = DeterministicPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden)
+    if config.deterministic_policy:
+        policy = DeterministicPolicy(obs_dim, act_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden)
     else:
-        policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden)
+        policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden)
     def eval_policy():
-        eval_returns = np.array([evaluate_policy(env, policy, args.max_episode_steps) \
-                                 for _ in range(args.n_eval_episodes)])
-        normalized_returns = d4rl.get_normalized_score(args.env_name, eval_returns) * 100.0
+        eval_returns = np.array([evaluate_policy(env, policy, config.max_episode_steps) \
+                                 for _ in range(config.n_eval_episodes)])
+        normalized_returns = d4rl.get_normalized_score(config.env_name, eval_returns) * 100.0
         log.row({
             'return mean': eval_returns.mean(),
             'return std': eval_returns.std(),
@@ -56,43 +60,45 @@ def main(args):
         })
 
     iql = ImplicitQLearning(
-        qf=TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden),
-        vf=ValueFunction(obs_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden),
+        qf=TwinQ(obs_dim, act_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden),
+        vf=ValueFunction(obs_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden),
         policy=policy,
-        optimizer_factory=lambda params: torch.optim.Adam(params, lr=args.learning_rate),
-        max_steps=args.n_steps,
-        tau=args.tau,
-        beta=args.beta,
-        alpha=args.alpha,
-        discount=args.discount
+        optimizer_factory=lambda params: torch.optim.Adam(params, lr=config.learning_rate),
+        max_steps=config.n_steps,
+        tau=config.tau,
+        beta=config.beta,
+        alpha=config.alpha,
+        discount=config.discount
     )
 
-    for step in trange(args.n_steps):
-        iql.update(**sample_batch(dataset, args.batch_size))
-        if (step+1) % args.eval_period == 0:
+    for step in trange(config.n_steps):
+        iql.update(**sample_batch(dataset, config.batch_size))
+        if (step+1) % config.eval_period == 0:
             eval_policy()
 
-    torch.save(iql.state_dict(), log.dir/'final.pt')
-    log.close()
+    torch.save(iql.state_dict(), os.path.join(config.paths['ckpt'], 'final.pt'))
+    #log.close()
 
 
 if __name__ == '__main__':
-    from argparse import ArgumentParser
-    parser = ArgumentParser()
-    parser.add_argument('--env-name', required=True)
-    parser.add_argument('--log-dir', required=True)
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--discount', type=float, default=0.99)
-    parser.add_argument('--hidden-dim', type=int, default=256)
-    parser.add_argument('--n-hidden', type=int, default=2)
-    parser.add_argument('--n-steps', type=int, default=10**6)
-    parser.add_argument('--batch-size', type=int, default=256)
-    parser.add_argument('--learning-rate', type=float, default=3e-4)
-    parser.add_argument('--alpha', type=float, default=0.005)
-    parser.add_argument('--tau', type=float, default=0.7)
-    parser.add_argument('--beta', type=float, default=3.0)
-    parser.add_argument('--deterministic-policy', action='store_true')
-    parser.add_argument('--eval-period', type=int, default=5000)
-    parser.add_argument('--n-eval-episodes', type=int, default=10)
-    parser.add_argument('--max-episode-steps', type=int, default=1000)
-    main(parser.parse_args())
+    from utils.Config import Config, get_parser
+    from src.utils import exp_logger
+    parser = get_parser(['default'])
+    
+    parser.add_argument('--env_name', required=True)
+    parser.add_argument('--deterministic_policy', action='store_true')
+    
+    config = Config(parser.parse_args())
+    config.load_config("iql", config.cfg_filename, format="yaml")
+    #config.add("state_dim",env_list[config.env_name]["state_dim"])
+    #config.add("action_dim", env_list[config.env_name]["action_dim"])
+
+    # logger_formats = ["stdout", "log", "csv", "tensorboard"]
+    logger_formats = ["stdout", "tensorboard",'csv']
+    exp_logger.configure(dir=config.paths["tb"], format_strs=logger_formats, precision=4)
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(config.device)
+    os.environ['MUJOCO_GL'] = "egl"
+
+    main(config)
