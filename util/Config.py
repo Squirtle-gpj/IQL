@@ -16,6 +16,18 @@ import json
 import collections
 
 
+def get_parser(arg_list=['default']):
+    parser = argparse.ArgumentParser()
+    if 'default' in arg_list:
+        parser.add_argument("--seed", default=1234, help="", type=int)
+        parser.add_argument("--experiment_name", default="experiment_name", help="")
+        parser.add_argument("--code_name", default="code_name", help="")
+        parser.add_argument("--cfg_filename", default="default", help="")
+        parser.add_argument("--restore", default=False, help="whether to load from checkpoint", type=str2bool)
+        parser.add_argument("--device", default="0", help="")
+        parser.add_argument("--save_logs", default=False, help="whether to save sys output", type=str2bool)
+
+    return parser
 
 class Config(object):
     def __init__(self, args):
@@ -131,18 +143,7 @@ def str2bool(text):
     return arg
 
 
-def get_parser(arg_list=['default']):
-    parser = argparse.ArgumentParser()
-    if 'default' in arg_list:
-        parser.add_argument("--seed", default=1234, help="", type=int)
-        parser.add_argument("--experiment_name", default="experiment_name", help="")
-        parser.add_argument("--code_name", default="code_name", help="")
-        parser.add_argument("--config_file_name", default="default.yaml", help="")
-        parser.add_argument("--restore", default=False, help="whether to load from checkpoint", type=str2bool)
-        parser.add_argument("--device", default="0", help="")
-        parser.add_argument("--save_logs", default=False, help="whether to save sys output", type=str2bool)
-        
-    return parser
+
 
 def check_n_create(dir_path, overwrite=False):
     try:

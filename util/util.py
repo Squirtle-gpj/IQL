@@ -11,8 +11,17 @@ import torch
 import torch.nn as nn
 
 
+DTYPE = torch.float
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def to_torch(x, dtype=None, device=None):
+	dtype = dtype or DTYPE
+	device = device or DEFAULT_DEVICE
+	if type(x) is dict:
+		return {k: to_torch(v, dtype, device) for k, v in x.items()}
+	elif torch.is_tensor(x):
+		return x.to(device).type(dtype)
+	return torch.tensor(x, dtype=dtype, device=device)
 
 class Squeeze(nn.Module):
     def __init__(self, dim=None):
@@ -52,10 +61,11 @@ def update_exponential_moving_average(target, source, alpha):
 
 
 def torchify(x):
-    x = torch.from_numpy(x)
-    if x.dtype is torch.float64:
-        x = x.float()
-    x = x.to(device=DEFAULT_DEVICE)
+    if not isinstance(x, torch.Tensor):
+        x = torch.from_numpy(x)
+        if x.dtype is torch.float64:
+            x = x.float()
+        x = x.to(device=DEFAULT_DEVICE)
     return x
 
 
@@ -77,21 +87,53 @@ def return_range(dataset, max_episode_steps):
 
 
 # dataset is a dict, values of which are tensors of same first dimension
-def sample_batch(dataset, batch_size):
+def sample_batch(dataset, batch_size, sample_seq_length=None):
     k = list(dataset.keys())[0]
     n, device = len(dataset[k]), dataset[k].device
     for v in dataset.values():
         assert len(v) == n, 'Dataset values must have same length'
-    indices = torch.randint(low=0, high=n, size=(batch_size,), device=device)
-    return {k: v[indices] for k, v in dataset.items()}
+
+    if sample_seq_length is not None:
+        valid_starts_indices = torch.where(dataset['valid_starts'] > 0.0)[0]
+        sampled_indices_indices = torch.randint(low=0, high=len(valid_starts_indices), size=(batch_size,), device=device)
+        sampled_start_indices = valid_starts_indices[sampled_indices_indices]
+        indices = []
+        for start in sampled_start_indices:
+            end = start + sample_seq_length
+            indices.append(torch.arange(start, end, device=device))
+        indices = torch.cat(indices, dim=0)
+        tmp = {}
+        #tmp['indices'] = indices.detach().cpu()
+        for k,v in dataset.items():
+            tmp[k] = v[indices].reshape(batch_size, sample_seq_length, -1).permute(1, 0, 2)
+        #tmp = {k: v[indices].reshape(batch_size, sample_seq_length, -1).permute(1, 0, 2) for k, v in dataset.items()}
+
+        return tmp
+    else:
+        indices = torch.randint(low=0, high=n, size=(batch_size,), device=device)
+        return {k: v[indices] for k, v in dataset.items()}
 
 
-def evaluate_policy(env, policy, max_episode_steps, deterministic=True):
+
+
+def evaluate_policy(env, policy, max_episode_steps, deterministic=True, policy_recurrent=False):
     obs = env.reset()
     total_reward = 0.
+    if policy_recurrent:
+        action, reward, internal_state = policy.get_initial_info()
     for _ in range(max_episode_steps):
         with torch.no_grad():
-            action = policy.act(torchify(obs), deterministic=deterministic).cpu().numpy()
+            if policy_recurrent:
+                (action, _, _, _, _), internal_state = policy.act(
+                    prev_internal_state=internal_state.reshape(1,1,-1),
+                    prev_action=to_torch(action).reshape(1,1,-1),
+                    reward=to_torch(reward).reshape(1,1,-1),
+                    obs=to_torch(obs).reshape(1,1,-1),
+                    deterministic=deterministic,
+                )
+                action = action.cpu().numpy()
+            else:
+                action = policy.act(torchify(obs), deterministic=deterministic).cpu().numpy()
         next_obs, reward, done, info = env.step(action)
         total_reward += reward
         if done:

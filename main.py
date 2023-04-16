@@ -1,22 +1,25 @@
-from pathlib import Path
-
 import os
 import gym
 import d4rl
 import numpy as np
 import torch
 from tqdm import trange
+from util import exp_logger
+from util.Config import Config, get_parser
+
+
 
 from src.iql import ImplicitQLearning
-from src.policy import GaussianPolicy, DeterministicPolicy
+from src.policy import  DeterministicPolicy, GaussianPolicy
 from src.value_functions import TwinQ, ValueFunction
-from src.util import return_range, set_seed, sample_batch, torchify, evaluate_policy
+from util.util import return_range, set_seed, sample_batch, torchify, evaluate_policy
 
 
 
-def get_env_and_dataset(log, env_name, max_episode_steps):
+def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None):
     env = gym.make(env_name)
     dataset = d4rl.qlearning_dataset(env)
+    #seq_dataset = d4rl.sequence_dataset(env)
 
     if any(s in env_name for s in ('halfcheetah', 'hopper', 'walker2d')):
         min_ret, max_ret = return_range(dataset, max_episode_steps)
@@ -25,6 +28,23 @@ def get_env_and_dataset(log, env_name, max_episode_steps):
         dataset['rewards'] *= max_episode_steps
     elif 'antmaze' in env_name:
         dataset['rewards'] -= 1.
+
+    if sample_seq_length is not None:
+        dataset['valid_starts'] = np.ones(shape=dataset['terminals'].shape)
+        terminal_ids = np.where(dataset['terminals']>0)[0]
+
+        last_end = -1
+        for i, terminal_idx in enumerate(terminal_ids):
+            max_start = terminal_idx -sample_seq_length+1
+            if max_start<=last_end:
+                last_end = terminal_idx
+                continue
+            else:
+                last_end = terminal_idx
+                dataset['valid_starts'][max_start:terminal_idx+1] = 0
+
+
+
 
     for k, v in dataset.items():
         dataset[k] = torchify(v)
@@ -39,7 +59,7 @@ def main(config):
     #log = Log(Path(args.log_dir)/args.env_name, vars(args))
     #log(f'Log dir: {log.dir}')
 
-    env, dataset = get_env_and_dataset(log, config.env_name, config.max_episode_steps)
+    env, dataset = get_env_and_dataset( config.env_name, config.max_episode_steps)
     obs_dim = dataset['observations'].shape[1]
     act_dim = dataset['actions'].shape[1]   # this assume continuous actions
     set_seed(config.seed, env=env)
@@ -48,16 +68,16 @@ def main(config):
         policy = DeterministicPolicy(obs_dim, act_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden)
     else:
         policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden)
-    def eval_policy():
+    def eval_policy(step):
         eval_returns = np.array([evaluate_policy(env, policy, config.max_episode_steps) \
                                  for _ in range(config.n_eval_episodes)])
         normalized_returns = d4rl.get_normalized_score(config.env_name, eval_returns) * 100.0
-        log.row({
+        return {
             'return mean': eval_returns.mean(),
             'return std': eval_returns.std(),
             'normalized return mean': normalized_returns.mean(),
             'normalized return std': normalized_returns.std(),
-        })
+        }
 
     iql = ImplicitQLearning(
         qf=TwinQ(obs_dim, act_dim, hidden_dim=config.hidden_dim, n_hidden=config.n_hidden),
@@ -74,15 +94,18 @@ def main(config):
     for step in trange(config.n_steps):
         iql.update(**sample_batch(dataset, config.batch_size))
         if (step+1) % config.eval_period == 0:
-            eval_policy()
+            results = eval_policy()
+            exp_logger.record_step(step)
+            for k,v in results.items():
+                exp_logger.record_tabular(k, v)
+            exp_logger.dump_tabular()
 
     torch.save(iql.state_dict(), os.path.join(config.paths['ckpt'], 'final.pt'))
     #log.close()
 
 
 if __name__ == '__main__':
-    from utils.Config import Config, get_parser
-    from src.utils import exp_logger
+
     parser = get_parser(['default'])
     
     parser.add_argument('--env_name', required=True)

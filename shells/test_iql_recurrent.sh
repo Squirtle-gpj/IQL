@@ -1,0 +1,1 @@
+screen python3 run_iql_recurrent.py --experiment_name test_iql_recurrent --code_name test --env_name hopper-medium-v2

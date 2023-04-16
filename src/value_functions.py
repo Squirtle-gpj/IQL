@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .util import mlp
+from util.util import mlp
 
 
 class TwinQ(nn.Module):
