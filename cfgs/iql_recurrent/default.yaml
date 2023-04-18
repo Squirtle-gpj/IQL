@@ -22,3 +22,4 @@ policy_layers: [256, 256]
 grad_norm: 1.0
 
 log_period: 1000
+save_period: 200000

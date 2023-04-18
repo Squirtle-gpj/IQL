@@ -11,7 +11,7 @@ class TwinQ(nn.Module):
         self.q2 = mlp(dims, squeeze_output=True)
 
     def both(self, state, action):
-        sa = torch.cat([state, action], 1)
+        sa = torch.cat([state, action], dim=-1)
         return self.q1(sa), self.q2(sa)
 
     def forward(self, state, action):

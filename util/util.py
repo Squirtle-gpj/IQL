@@ -142,6 +142,32 @@ def evaluate_policy(env, policy, max_episode_steps, deterministic=True, policy_r
             obs = next_obs
     return total_reward
 
+def evaluate_policy_discrete(env, encoder, policy, max_episode_steps, deterministic=True,):
+    obs = env.reset()
+    total_reward = 0.
+    done = False
+    prev_rssmstate = encoder.RSSM._init_rssm_state(1)
+    prev_action = torch.zeros(1, encoder.action_size).to(encoder.device)
+    prev_reward = 0
+    for _ in range(max_episode_steps):
+        with torch.no_grad():
+            model_state, rssm_state = encoder.get_state_from_obs(to_torch(obs),
+                                                                 to_torch(prev_action),
+                                                                 to_torch(done),
+                                                                 prev_rssmstate,
+                                                                 to_torch(prev_reward))
+            action = policy.act(model_state, deterministic=deterministic).cpu().numpy()
+        next_obs, reward, done, info = env.step(action)
+        total_reward += reward
+        prev_reward = reward
+        prev_rssmstate = rssm_state
+        prev_action = action
+        if done:
+            break
+        else:
+            obs = next_obs
+    return total_reward
+
 
 def set_seed(seed, env=None):
     torch.manual_seed(seed)
