@@ -122,8 +122,11 @@ if __name__ == '__main__':
     
     parser.add_argument('--env_name', required=True)
     parser.add_argument('--deterministic_policy', action='store_true')
-    
-    config = Config(parser.parse_args())
+    args = parser.parse_args()
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.device)
+    os.environ['MUJOCO_GL'] = "egl"
+    config = Config(args)
     config.load_config("iql", config.cfg_filename, format="yaml")
     #config.add("state_dim",env_list[config.env_name]["state_dim"])
     #config.add("action_dim", env_list[config.env_name]["action_dim"])
@@ -132,8 +135,6 @@ if __name__ == '__main__':
     logger_formats = ["stdout", "tensorboard",'csv']
     exp_logger.configure(dir=config.paths["tb"], format_strs=logger_formats, precision=4)
 
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(config.device)
-    os.environ['MUJOCO_GL'] = "egl"
+
 
     main(config)
