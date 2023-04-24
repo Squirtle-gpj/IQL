@@ -75,6 +75,71 @@ class ImplicitQLearning(nn.Module):
         self.policy_optimizer.step()
         self.policy_lr_schedule.step()
 
+class ImplicitQLearning_obs_encoder(nn.Module):
+    def __init__(self, obs_encoder, qf, vf, policy, optimizer_factory, max_steps,
+                 tau, beta, discount=0.99, alpha=0.005):
+        super().__init__()
+        self.obs_encoder = obs_encoder
+        self.qf = qf.to(DEFAULT_DEVICE)
+        self.q_target = copy.deepcopy(qf).requires_grad_(False).to(DEFAULT_DEVICE)
+        #self.q_target = copy.deepcopy(qf).requires_grad_(False).to(DEFAULT_DEVICE)
+        self.vf = vf.to(DEFAULT_DEVICE)
+        self.policy = policy.to(DEFAULT_DEVICE)
+        #self.v_optimizer = optimizer_factory(self.vf.parameters())
+        #self.q_optimizer = optimizer_factory(self.qf.parameters())
+        self.policy_optimizer = optimizer_factory(self.policy.parameters())
+        self.policy_lr_schedule = CosineAnnealingLR(self.policy_optimizer, max_steps)
+        self.tau = tau
+        self.beta = beta
+        self.discount = discount
+        self.alpha = alpha
+
+    def update(self, observations, actions, next_observations, rewards, terminals,obs_quantile_idx, **kwargs):
+        with torch.no_grad():
+            target_q = self.q_target(observations, actions)
+            #next_v = self.vf(next_observations)
+
+        # v, next_v = compute_batched(self.vf, [observations, next_observations])
+
+        # Update value function
+            v = self.vf(observations)
+            adv = target_q - v
+            exp_adv = torch.exp(self.beta * adv.detach()).clamp(max=EXP_ADV_MAX)
+            #obs_emb = self.obs_encoder.encode(observations)
+            obs_emb=torch.tensor(obs_quantile_idx, dtype=torch.float32).to(DEFAULT_DEVICE)
+            #obs_emb[:,:] = observations[:,:]
+            #obs_emb = self.obs_encoder.decode(observations).detach()
+
+
+        # Update Q function
+        #targets = rewards + (1. - terminals.float()) * self.discount * next_v.detach()
+        #qs = self.qf.both(observations, actions)
+        #q_loss = sum(F.mse_loss(q, targets) for q in qs) / len(qs)
+
+
+        # Update target Q network
+        #update_exponential_moving_average(self.q_target, self.qf, self.alpha)
+
+        # Update policy
+
+        policy_out = self.policy(obs_emb)
+        if isinstance(policy_out, torch.distributions.Distribution):
+            bc_losses = -policy_out.log_prob(actions)
+        elif torch.is_tensor(policy_out):
+            assert policy_out.shape == actions.shape
+            bc_losses = torch.sum((policy_out - actions)**2, dim=1)
+        else:
+            raise NotImplementedError
+        policy_loss = torch.mean(exp_adv * bc_losses)
+        self.policy_optimizer.zero_grad(set_to_none=True)
+        policy_loss.backward()
+        self.policy_optimizer.step()
+        self.policy_lr_schedule.step()
+
+        train_metrics = {}
+        train_metrics['policy_loss'] = float(policy_loss.mean().detach().cpu())
+        return train_metrics
+
 
 class ImplicitQLearning_recurrent(nn.Module):
     def __init__(self, qf, vf, policy, optimizer_factory, max_steps,

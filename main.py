@@ -93,14 +93,26 @@ def main(config):
 
     for step in trange(config.n_steps):
         iql.update(**sample_batch(dataset, config.batch_size))
-        if (step+1) % config.eval_period == 0:
-            results = eval_policy()
+
+
+        if (step == 0) or ((step + 1) % config.eval_period == 0):
+            results = eval_policy(step)
             exp_logger.record_step(step)
-            for k,v in results.items():
+            for k, v in results.items():
                 exp_logger.record_tabular(k, v)
             exp_logger.dump_tabular()
+            if step == 0:
+                best_result = results["return mean"]
+                torch.save(iql.state_dict(), os.path.join(config.paths['ckpt'], 'best.pt'))
+            if (step + 1) % config.save_period == 0:
+                if results["return mean"] >= best_result:
+                    best_result = results["return mean"]
+                    torch.save(iql.state_dict(), os.path.join(config.paths['ckpt'], 'best.pt'))
+                torch.save(iql.state_dict(), os.path.join(config.paths['ckpt'], 'final.pt'))
 
     torch.save(iql.state_dict(), os.path.join(config.paths['ckpt'], 'final.pt'))
+
+
     #log.close()
 
 

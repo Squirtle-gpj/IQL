@@ -142,6 +142,35 @@ def evaluate_policy(env, policy, max_episode_steps, deterministic=True, policy_r
             obs = next_obs
     return total_reward
 
+def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps, deterministic=True, policy_recurrent=False):
+    obs = env.reset()
+    total_reward = 0.
+    if policy_recurrent:
+        action, reward, internal_state = policy.get_initial_info()
+    for _ in range(max_episode_steps):
+        with torch.no_grad():
+            if policy_recurrent:
+                (action, _, _, _, _), internal_state = policy.act(
+                    prev_internal_state=internal_state.reshape(1,1,-1),
+                    prev_action=to_torch(action).reshape(1,1,-1),
+                    reward=to_torch(reward).reshape(1,1,-1),
+                    obs=to_torch(obs).reshape(1,1,-1),
+                    deterministic=deterministic,
+                )
+                action = action.cpu().numpy()
+            else:
+                obs_emb = obs_encoder.encode(to_torch(obs))
+                action = policy.act(obs_emb, deterministic=deterministic).cpu().numpy()
+        next_obs, reward, done, info = env.step(action)
+        total_reward += reward
+        if done:
+            break
+        else:
+            obs = next_obs
+    return total_reward
+
+
+
 def evaluate_policy_discrete(env, encoder, policy, max_episode_steps, deterministic=True,):
     obs = env.reset()
     total_reward = 0.
