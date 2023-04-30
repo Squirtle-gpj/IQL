@@ -7,6 +7,15 @@ from util.torchkit.networks import FlattenMlp
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from src.ObsRepEncoder import ObsRepMLP
 
+# a new calss named POMDP_policy
+'''
+I want to define a class named POMDP_policy, which is a subclass of nn.Module. you should modify 
+the code in the class POMDP_encoder, and add a new class named POMDP_policy.
+1) you should create a module called self.policy instead of self.encoder, and so, the output dim of the self.policy is self.action_dim
+2) the forward function and the forward_single function should be modified accordingly.
+'''
+
+
 class POMDP_encoder(nn.Module):
     def __init__(
         self,

@@ -76,14 +76,20 @@ def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None, cod
     return env, dataset, obs_discretizer
 
 
-def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False):
+def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True):
     all_results = {}
     total_return_mean = 0
     total_return_std = 0
     total_normalized_return_mean = 0
     total_normalized_return_std = 0
 
-    eval_returns = np.array([evaluate_policy_obs_encoder(env, obs_encoder, policy, config.max_episode_steps,
+    if use_obs_encoder:
+         eval_fn = evaluate_policy_obs_encoder
+    else:
+        obs_encoder = None
+        eval_fn = evaluate_policy_pomdp
+
+    eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
                                                          {'observable_type': 'full', 'name': 'full'},
                                                          encoder_recurrent=False,
                                                          deterministic=deterministic) \
@@ -104,7 +110,7 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
     for i_scheme in range(len(observation_manager.schemes)):
         observation_manager.set_scheme(i_scheme)
 
-        eval_returns = np.array([evaluate_policy_obs_encoder(env, obs_encoder, policy, config.max_episode_steps,
+        eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
                                                              observation_manager.get_current_scheme(),
                                                              encoder_recurrent=encoder_recurrent,
                                                              deterministic=deterministic) \
@@ -171,6 +177,45 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
 
     return total_reward
 
+def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
+                                mask_scheme=None,
+                                encoder_recurrent=False,
+                                deterministic=False):
+    full_observation = env.reset()
+    #full_observation, mask_indices, masked_observation = observation_manager.get_observation(observation)
+    if encoder_recurrent:
+        action, reward, prev_internal_state = policy.get_initial_info()
+    done = False
+    total_reward = 0.0
+    step = 0
+
+    while not done and step < max_episode_steps:
+        with torch.no_grad():
+            if encoder_recurrent:
+                prev_action = action
+                (action,_,_,_), prev_internal_state = policy.forward_single( 
+                                                                            prev_internal_state=prev_internal_state),
+                                                                            prev_action=to_torch(prev_action),
+                                                                            reward=to_torch(reward),
+                                                                            obs=to_torch(full_observation),
+                                                                            deterministic=deterministic,
+                                                                            mask_scheme=mask_scheme,)
+                                                                            
+            else:
+                action = policy.act(encoded_observation.float(), deterministic=deterministic).reshape(-1).cpu().numpy()
+                #encoded_observation = obs_encoder.encode(full_observation, mask_scheme)
+
+            
+                #action = policy(encoded_observation.float())
+                
+            full_observation, reward, done, _ = env.step(action)
+            #full_observation, mask_indices, masked_observation = observation_manager.get_observation(observation)
+
+
+            total_reward += reward
+            step += 1
+
+    return total_reward
 
 class ObservationManager:
     def __init__(self, obs_dim,   env_name='hopper'):
