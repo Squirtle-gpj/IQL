@@ -190,7 +190,7 @@ class POMDP_encoder(nn.Module):
         return {'loss/'+mask_scheme['name']: float(loss.mean().detach().cpu())}
 
     @torch.no_grad()
-    def forward_single(self, prev_action, reward, obs, prev_internal_state=None, mask_scheme=None):
+    def forward_single(self, prev_action, reward, obs, prev_internal_state=None, mask_scheme=None, v2=False):
         """
         For prev_action a, reward r, observ o: (1, 1, dim)
                 a -> r, o
@@ -213,10 +213,14 @@ class POMDP_encoder(nn.Module):
 
         predicted_codes = logits.argmax(dim=-1).reshape(1, 1, self.obs_dim)
 
-        true_codes = self.obs_discretizer.encode(obs).reshape(predicted_codes.shape)
-        true_codes[mask] = predicted_codes[mask].float()
+        if v2:
+           result, predicted_codes  = self.obs_discretizer.get_predicted_emb(obs, predicted_codes, mask)
+        else:
+            true_codes = self.obs_discretizer.encode(obs).reshape(predicted_codes.shape)
+            true_codes[mask] = predicted_codes[mask].float()
+            result = true_codes
 
-        return true_codes, current_internal_state
+        return result, current_internal_state
 
 
 

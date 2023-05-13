@@ -142,7 +142,7 @@ def evaluate_policy(env, policy, max_episode_steps, deterministic=True, policy_r
             obs = next_obs
     return total_reward
 
-def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps, deterministic=True, policy_recurrent=False):
+def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps, deterministic=True, policy_recurrent=False, label_input=False):
     obs = env.reset()
     total_reward = 0.
     if policy_recurrent:
@@ -159,8 +159,11 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps, det
                 )
                 action = action.cpu().numpy()
             else:
-                obs_emb = obs_encoder.encode(to_torch(obs))
-                action = policy.act(obs_emb, deterministic=deterministic).cpu().numpy()
+                if not label_input:
+                    obs_emb = obs_encoder.encode(to_torch(obs))
+                else:
+                    _, obs_emb = obs_encoder.encode(to_torch(obs), True)
+                action = policy.act(obs_emb.float(), deterministic=deterministic).cpu().numpy()
         next_obs, reward, done, info = env.step(action)
         total_reward += reward
         if done:

@@ -33,7 +33,7 @@ def sample_batch(dataset, batch_size, sample_seq_length=None):
         indices = torch.randint(low=0, high=n, size=(batch_size,), device=device)
         return {k: v[indices] for k, v in dataset.items()}
 
-def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None, codebook_size=50):
+def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None, codebook_size=50, quantile=True):
     env = gym.make(env_name)
     dataset = d4rl.qlearning_dataset(env)
     # seq_dataset = d4rl.sequence_dataset(env)
@@ -64,19 +64,23 @@ def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None, cod
                 last_end = terminal_idx
                 dataset['valid_starts'][max_start+1:terminal_idx + 1] = 0
 
-    obs_discretizer = QuantileDiscretizer(dataset['observations'], N=codebook_size)
-    #action_discretizer = QuantileDiscretizer(dataset['actions'], N=codebook_size)
-    #reward_dicretizer = QuantileDiscretizer(dataset['reward'], N=codebook_size)
-    dataset['obs_quantile_idx'] = obs_discretizer.discretize(x=dataset['observations'])
-    dataset['next_obs_quantile_idx'] = obs_discretizer.discretize(x=dataset['next_observations'][-1])
+    if  quantile:
+        obs_discretizer = QuantileDiscretizer(dataset['observations'], N=codebook_size)
+        #action_discretizer = QuantileDiscretizer(dataset['actions'], N=codebook_size)
+        #reward_dicretizer = QuantileDiscretizer(dataset['reward'], N=codebook_size)
+        dataset['obs_quantile_idx'] = obs_discretizer.discretize(x=dataset['observations'])
+        dataset['next_obs_quantile_idx'] = obs_discretizer.discretize(x=dataset['next_observations'][-1])
 
     for k, v in dataset.items():
         dataset[k] = torchify(v)
-    dataset['next_obs_quantile_idx']  = torch.cat([dataset['obs_quantile_idx'][1:],dataset['next_obs_quantile_idx']], dim=0)
-    return env, dataset, obs_discretizer
+    if  quantile:
+        dataset['next_obs_quantile_idx']  = torch.cat([dataset['obs_quantile_idx'][1:],dataset['next_obs_quantile_idx']], dim=0)
+        return env, dataset, obs_discretizer
+    else:
+        return env, dataset, None
 
 
-def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True):
+def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True, v2=False):
     all_results = {}
     total_return_mean = 0
     total_return_std = 0
@@ -85,15 +89,21 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
 
     if use_obs_encoder:
          eval_fn = evaluate_policy_obs_encoder
+         eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
+                                          {'observable_type': 'full', 'name': 'full'},
+                                          encoder_recurrent=False,
+                                          deterministic=deterministic, v2=v2) \
+                                  for _ in range(config.n_eval_episodes)])
     else:
         obs_encoder = None
         eval_fn = evaluate_policy_pomdp
+        eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
+                                         {'observable_type': 'full', 'name': 'full'},
+                                         encoder_recurrent=True,
+                                         deterministic=deterministic) \
+                                 for _ in range(config.n_eval_episodes)])
 
-    eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
-                                                         {'observable_type': 'full', 'name': 'full'},
-                                                         encoder_recurrent=False,
-                                                         deterministic=deterministic) \
-                             for _ in range(config.n_eval_episodes)])
+
 
     normalized_returns = d4rl.get_normalized_score(config.env_name, eval_returns) * 100.0
 
@@ -113,7 +123,7 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
         eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
                                                              observation_manager.get_current_scheme(),
                                                              encoder_recurrent=encoder_recurrent,
-                                                             deterministic=deterministic) \
+                                                             deterministic=deterministic, v2=v2) \
                                  for _ in range(config.n_eval_episodes)])
         normalized_returns = d4rl.get_normalized_score(config.env_name, eval_returns) * 100.0
 
@@ -143,7 +153,7 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
 def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
                                 mask_scheme=None,
                                 encoder_recurrent=False,
-                                deterministic=False):
+                                deterministic=False, v2=False):
     full_observation = env.reset()
     #full_observation, mask_indices, masked_observation = observation_manager.get_observation(observation)
     if encoder_recurrent:
@@ -159,7 +169,7 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
                                                                                    to_torch(reward),
                                                                                    to_torch(full_observation),
                                                                                    mask_scheme=mask_scheme,
-                                                                                   prev_internal_state=prev_internal_state)
+                                                                                   prev_internal_state=prev_internal_state, v2=v2)
         else:
             if mask_scheme['observable_type'] == 'full':
                 encoded_observation = obs_encoder.obs_discretizer.encode(to_torch(full_observation))
@@ -180,7 +190,7 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
 def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
                                 mask_scheme=None,
                                 encoder_recurrent=False,
-                                deterministic=False):
+                                deterministic=False, v2=False):
     full_observation = env.reset()
     #full_observation, mask_indices, masked_observation = observation_manager.get_observation(observation)
     if encoder_recurrent:
@@ -193,16 +203,10 @@ def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
         with torch.no_grad():
             if encoder_recurrent:
                 prev_action = action
-                (action,_,_,_), prev_internal_state = policy.forward_single( 
-                                                                            prev_internal_state=prev_internal_state),
-                                                                            prev_action=to_torch(prev_action),
-                                                                            reward=to_torch(reward),
-                                                                            obs=to_torch(full_observation),
-                                                                            deterministic=deterministic,
-                                                                            mask_scheme=mask_scheme,)
-                                                                            
+                (action,_,_,_,_), prev_internal_state = policy.forward_single(prev_internal_state, to_torch(prev_action), to_torch(reward), to_torch(full_observation), deterministic, False, mask_scheme)
+                action = action.reshape(-1).cpu().numpy()
             else:
-                action = policy.act(encoded_observation.float(), deterministic=deterministic).reshape(-1).cpu().numpy()
+                action = policy.act(to_torch(full_observation), deterministic=deterministic).reshape(-1).cpu().numpy()
                 #encoded_observation = obs_encoder.encode(full_observation, mask_scheme)
 
             

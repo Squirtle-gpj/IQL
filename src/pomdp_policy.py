@@ -6,6 +6,8 @@ from util.torchkit.constant import *
 from util.torchkit.networks import FlattenMlp
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from src.ObsRepEncoder import ObsRepMLP
+import copy
+from util.actor import TanhGaussianPolicy
 
 
 class POMDP_policy(nn.Module):
@@ -163,27 +165,18 @@ class POMDP_policy(nn.Module):
         # here we assume batch_size = 1
 
         ## here we set the ndim = 2 for action and reward for compatibility
-        prev_action = ptu.zeros((1, self.action_dim)).float()
-        reward = ptu.zeros((1, 1)).float()
+        ## here we set the ndim = 2 for action and reward for compatibility
+        prev_action = torch.zeros((1, self.action_dim), device=self.device).float()
+        reward = torch.zeros((1, 1), device=self.device).float()
 
-        hidden_state = ptu.zeros((self.num_layers, 1, self.rnn_hidden_size)).float()
-
-        internal_state = hidden_state
+        hidden_state = torch.zeros((self.num_layers, 1, self.rnn_hidden_size), device=self.device).float()
 
 
-        return prev_action, reward, internal_state
+
+        return prev_action, reward, hidden_state
 
     @torch.no_grad()
-    def act(
-        self,
-        prev_internal_state,
-        prev_action,
-        reward,
-        obs,
-        deterministic=False,
-        return_log_prob=False,
-        mask_scheme=None,
-    ):
+    def forward_single(self, prev_internal_state, prev_action, reward, obs, deterministic, return_log_prob, mask_scheme):
         # for evaluation (not training), so no target actor, and T = 1
         # a function that generates action, works like a pytorch module
 
@@ -197,7 +190,7 @@ class POMDP_policy(nn.Module):
         hidden_state, current_internal_state = self.get_hidden_states(
             prev_actions=prev_action.reshape(1,1,-1),
             rewards=reward.reshape(1,1,-1),
-            obs_emb=obs_emb,
+            observs=obs_emb,
             initial_internal_state=prev_internal_state,
         )
         # 2. another branch for current obs
@@ -219,19 +212,19 @@ class POMDP_policy(nn.Module):
             target_q = self.q_target(observs[:-1], prev_actions[1:])
             v = self.vf(observs[:-1])
             adv = target_q - v
-            exp_adv = torch.exp(self.beta * adv.detach()).clamp(max=100)
+            exp_adv = torch.exp(3.0 * adv.detach()).clamp(max=100)
 
-        new_actions, _, tanh_normal = self.policy(prev_actions[:-1], rewards[:-1], observs[:-1], mask_scheme)
+        new_actions, _, tanh_normal = self.forward(prev_actions[:-1], rewards[:-1], observs[:-1], mask_scheme)
         if not self.deterministic:
-            bc_losses = -tanh_normal.log_prob(actions[:-1])
+            bc_losses = -tanh_normal.log_prob(prev_actions[:-1]).sum(dim=-1)
         else:
-            bc_losses = torch.sum((new_actions - actions[:-1]) ** 2, dim=-1)
+            bc_losses = torch.sum((new_actions - prev_actions[:-1]) ** 2, dim=-1)
 
         policy_loss = torch.mean(exp_adv.squeeze(dim=-1) * bc_losses)
-        self.policy_optimizer.zero_grad(set_to_none=True)
+        self.optimizer.zero_grad(set_to_none=True)
         policy_loss.backward()
-        self.policy_optimizer.step()
-        self.policy_lr_schedule.step()
+        self.optimizer.step()
+        self.lr_schedule.step()
         
 
         return {'loss/'+mask_scheme['name']: float(policy_loss.mean().detach().cpu())}

@@ -6,14 +6,7 @@ import torch.nn.functional as F
 from torch.distributions import RelaxedOneHotCategorical
 
 
-class MultiCodebook(torch.nn.Embedding):
-    def __init__(self, num_domain: int, num_codebook: int, dim_codebook: int, **kwargs):
-        super().__init__(num_embeddings=num_codebook*num_domain, embedding_dim=dim_codebook)
-        self.weight.data.uniform_(-1 / num_codebook, 1 / num_codebook)
-        self._eps = torch.finfo(torch.float32).eps
-        self.n_domain = num_domain
-        self.n_code = num_codebook
-        self.code_dim = dim_codebook
+
 class Codebook(torch.nn.Embedding):
     """VQ-VAE Codebook.
 

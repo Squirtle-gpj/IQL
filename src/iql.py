@@ -94,6 +94,36 @@ class ImplicitQLearning_obs_encoder(nn.Module):
         self.discount = discount
         self.alpha = alpha
 
+    def update_v2(self, observations, actions, lable_input=False):
+        with torch.no_grad():
+            target_q = self.q_target(observations, actions)
+            v = self.vf(observations)
+            adv = target_q - v
+            exp_adv = torch.exp(self.beta * adv.detach()).clamp(max=EXP_ADV_MAX)
+            if not lable_input:
+                obs_emb = self.obs_encoder.encode(observations)
+            else:
+                _, obs_emb = self.obs_encoder.encode(observations, get_idx=True)
+
+
+        policy_out = self.policy(obs_emb.float())
+        if isinstance(policy_out, torch.distributions.Distribution):
+            bc_losses = -policy_out.log_prob(actions)
+        elif torch.is_tensor(policy_out):
+            assert policy_out.shape == actions.shape
+            bc_losses = torch.sum((policy_out - actions) ** 2, dim=1)
+        else:
+            raise NotImplementedError
+        policy_loss = torch.mean(exp_adv * bc_losses)
+        self.policy_optimizer.zero_grad(set_to_none=True)
+        policy_loss.backward()
+        self.policy_optimizer.step()
+        self.policy_lr_schedule.step()
+
+        train_metrics = {}
+        train_metrics['policy_loss'] = float(policy_loss.mean().detach().cpu())
+        return train_metrics
+
     def update(self, observations, actions, next_observations, rewards, terminals,obs_quantile_idx, **kwargs):
         with torch.no_grad():
             target_q = self.q_target(observations, actions)
