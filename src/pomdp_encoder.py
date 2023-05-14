@@ -35,6 +35,7 @@ class POMDP_encoder(nn.Module):
         device='cuda',
         token_dim=3,
         continuous=False,
+        use_obs_as_labels=False,
     ):
         super().__init__()
 
@@ -101,6 +102,7 @@ class POMDP_encoder(nn.Module):
         )
 
         self.continuous = continuous
+        self.use_obs_as_labels = use_obs_as_labels
         if continuous:
             self.loss_fn = torch.nn.MSELoss(reduction='mean')
         else:
@@ -195,6 +197,8 @@ class POMDP_encoder(nn.Module):
         logits, predicted_codes, mask = self.forward(prev_actions, rewards, observs, mask_scheme)
 
         if self.continuous:
+            if self.use_obs_as_labels:
+                labels = observs
             loss = self.loss_fn(logits[mask], labels[mask].float().reshape(-1))
         else:
             loss = self.loss_fn(logits[mask], labels[mask].long().reshape(-1))
@@ -237,7 +241,10 @@ class POMDP_encoder(nn.Module):
         if v2:
            result, predicted_codes  = self.obs_discretizer.get_predicted_emb(obs, predicted_codes, mask)
         else:
-            true_codes = self.obs_discretizer.encode(obs).reshape(predicted_codes.shape)
+            if self.use_obs_as_labels:
+                true_codes = obs.reshape(predicted_codes.shape)
+            else:
+                true_codes = self.obs_discretizer.encode(obs).reshape(predicted_codes.shape)
             true_codes[mask] = predicted_codes[mask].float()
             result = true_codes
 
