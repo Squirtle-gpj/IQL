@@ -1,14 +1,4 @@
-import os
-from tqdm import trange
-from util import exp_logger
-from util.Config import Config, get_parser
-from src.policy import  DeterministicPolicy, GaussianPolicy
-from src.eval.pomdp_eval import *
-from src.pomdp_encoder import POMDP_encoder
 
-from src.iql import ImplicitQLearning
-from src.policy import  DeterministicPolicy, GaussianPolicy
-from src.value_functions import TwinQ, ValueFunction
 
 
 
@@ -109,6 +99,10 @@ def main(config):
 
 
 if __name__ == '__main__':
+    import os
+
+    from util.Config import Config, get_parser
+
     parser = get_parser(['default'])
     parser.add_argument('--env_name', required=True)
     parser.add_argument('--env_code', required=True)
@@ -122,10 +116,20 @@ if __name__ == '__main__':
     import util.torchkit.pytorch_utils as ptu
     ptu.set_gpu_mode(True)
 
+    from tqdm import trange
+
+    from src.policy import DeterministicPolicy, GaussianPolicy
+    from src.eval.pomdp_eval import *
+    from src.pomdp_encoder import POMDP_encoder
+
+    from src.iql import ImplicitQLearning
+    from src.policy import DeterministicPolicy, GaussianPolicy
+    from src.value_functions import TwinQ, ValueFunction
+
     config = Config(args)
     config.load_config("pomdp_encoder", config.cfg_filename, format="yaml")
 
-
+    from util import exp_logger
     # learnt world-models desc
 
     logger_formats = ["stdout", "tensorboard", 'csv']
