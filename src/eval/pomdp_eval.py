@@ -80,7 +80,7 @@ def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None, cod
         return env, dataset, None
 
 
-def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True, v2=False):
+def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True, v2=False, padding_zero=False):
     all_results = {}
     total_return_mean = 0
     total_return_std = 0
@@ -99,7 +99,7 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
         eval_fn = evaluate_policy_pomdp
         eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
                                          {'observable_type': 'full', 'name': 'full'},
-                                         encoder_recurrent=True,
+                                         encoder_recurrent=encoder_recurrent,
                                          deterministic=deterministic) \
                                  for _ in range(config.n_eval_episodes)])
 
@@ -190,8 +190,10 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
 def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
                                 mask_scheme=None,
                                 encoder_recurrent=False,
-                                deterministic=False, v2=False):
+                                deterministic=False, v2=False, padding_zero=False):
     full_observation = env.reset()
+    last_observation = torch.zeros(to_torch(full_observation).shape, device='cuda')
+    obs_dim = full_observation.shape[0]
     #full_observation, mask_indices, masked_observation = observation_manager.get_observation(observation)
     if encoder_recurrent:
         action, reward, prev_internal_state = policy.get_initial_info()
@@ -206,6 +208,21 @@ def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
                 (action,_,_,_,_), prev_internal_state = policy.forward_single(prev_internal_state, to_torch(prev_action), to_torch(reward), to_torch(full_observation), deterministic, False, mask_scheme)
                 action = action.reshape(-1).cpu().numpy()
             else:
+                full_observation = to_torch(full_observation)
+                observable_type = mask_scheme.get('observable_type', 'full')
+                mask_entry = mask_scheme.get('mask_entry', None)
+                mask_ratio = mask_scheme.get('mask_ratio', None)
+                if observable_type == 'random_step':
+                    num_masked_elements_per_row = min(int(obs_dim * mask_ratio) + 1, obs_dim)
+                    mask_entry = torch.randint(0, obs_dim, (num_masked_elements_per_row,))
+                    if padding_zero:
+                        full_observation[mask_entry] = 0
+                    else:
+                        full_observation[mask_entry] = last_observation[mask_entry]
+                elif observable_type == 'random_episode' or observable_type=='fixed':
+                    full_observation[mask_entry] = 0
+
+
                 action = policy.act(to_torch(full_observation), deterministic=deterministic).reshape(-1).cpu().numpy()
                 #encoded_observation = obs_encoder.encode(full_observation, mask_scheme)
 
@@ -222,13 +239,15 @@ def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
     return total_reward
 
 class ObservationManager:
-    def __init__(self, obs_dim,   env_name='hopper'):
+    def __init__(self, obs_dim,   env_name='hopper', train_mask_ratio=0.5):
 
         #self.fixed_mask_indices = fixed_mask_indices
         self.random_episode_indices = None
         self.current_scheme = None
         self.env_name = env_name
+        self.train_mask_ratio=train_mask_ratio
         self.obs_dim = obs_dim
+
         self.initial_schemes()
 
     def set_scheme(self, scheme_index=None, scheme=None):
@@ -301,19 +320,58 @@ class ObservationManager:
             self.random_episode_indices = None
 
     def initial_schemes(self):
-        self.scheme_info = {
+        self.train_scheme_info = {
             "halfcheetah": {
-                "random": [0.1,  0.3,  0.5],
+                "random": [0.1, 0.3, 0.5, 0.7, 0.9],
                 "P": [0, 1, 2, 3, 4, 5, 6, 7],
                 "V": [8, 9, 10, 11, 12, 13, 14, 15, 16],
             },
             "walker": {
-                "random": [0.1,  0.3,  0.5],
+                "random": [0.1, 0.3, 0.5, 0.7, 0.9],
                 "P": [0, 1, 2, 3, 4, 5, 6, 7],
                 "V": [8, 9, 10, 11, 12, 13, 14, 15, 16],
             },
             "hopper": {
-                "random": [0.1,  0.3,  0.5],
+                "random": [0.1, 0.3, 0.5],
+                "P": [0, 1, 2, 3, 4],
+                "V": [5, 6, 7, 8, 9, 10],
+            },
+            "toy": {
+                "random": [0.1, 0.3, 0.5],
+                "x": [0],
+                "y": [1],
+            },
+        }
+        self.train_schemes = []
+
+
+        tmp = {"observable_type": "random_step",
+               "mask_ratio": self.train_mask_ratio,
+               "mask_entry": [0],
+               "name": "random_step_" + str(self.train_mask_ratio)}
+        self.train_schemes.append(tmp)
+
+
+        tmp = {"observable_type": "random_episode",
+               "mask_ratio": self.train_mask_ratio,
+               "mask_entry": [0],
+               "name": "random_episode_" + str(self.train_mask_ratio)}
+        self.train_schemes.append(tmp)
+
+
+        self.scheme_info = {
+            "halfcheetah": {
+                "random": [0.1,  0.3,  0.5, 0.7, 0.9],
+                "P": [0, 1, 2, 3, 4, 5, 6, 7],
+                "V": [8, 9, 10, 11, 12, 13, 14, 15, 16],
+            },
+            "walker": {
+                "random": [0.1,  0.3,  0.5, 0.7, 0.9],
+                "P": [0, 1, 2, 3, 4, 5, 6, 7],
+                "V": [8, 9, 10, 11, 12, 13, 14, 15, 16],
+            },
+            "hopper": {
+                "random": [0.1,  0.3,  0.5, 0.7, 0.9],
                 "P": [0, 1, 2, 3, 4],
                 "V": [5, 6, 7, 8, 9, 10],
             },
