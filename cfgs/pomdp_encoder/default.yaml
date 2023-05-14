@@ -4,7 +4,7 @@ learning_rate: 0.001
 max_episode_steps: 1000
 n_code: 50
 token_dim: 3
-log_period: 1
+log_period: 1000
 save_period: 1000
 eval_period: 10000
 
