@@ -1,5 +1,5 @@
-n_steps: 200000
-batch_size: 1024
+n_steps: 1000000
+batch_size: 2048
 learning_rate: 0.001
 max_episode_steps: 1000
 n_code: 2048

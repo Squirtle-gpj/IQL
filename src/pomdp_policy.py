@@ -223,6 +223,7 @@ class POMDP_policy(nn.Module):
         policy_loss = torch.mean(exp_adv.squeeze(dim=-1) * bc_losses)
         self.optimizer.zero_grad(set_to_none=True)
         policy_loss.backward()
+        grad_norms = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0, norm_type=2)
         self.optimizer.step()
         self.lr_schedule.step()
         
