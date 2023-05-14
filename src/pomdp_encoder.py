@@ -34,7 +34,7 @@ class POMDP_encoder(nn.Module):
         max_steps=10000,
         device='cuda',
         token_dim=3,
-
+        continuous=False,
     ):
         super().__init__()
 
@@ -92,24 +92,34 @@ class POMDP_encoder(nn.Module):
         shortcut_embedding_size = observ_embedding_size
 
 
-        ## 4. build q networks
+
         self.encoder = self.build_encoder(
             input_size=self.rnn_hidden_size + shortcut_embedding_size,
             hidden_sizes=encoder_layers,
             action_dim=action_dim,
+            continuous=continuous,
         )
 
-        self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
+        self.continuous = continuous
+        if continuous:
+            self.loss_fn = torch.nn.MSELoss(reduction='mean')
+        else:
+            self.loss_fn = torch.nn.CrossEntropyLoss(reduction='mean')
         self.optimizer = torch.optim.Adam(self.parameters())
         self.lr_schedule = CosineAnnealingLR(self.optimizer, max_steps)
         self.device = device
         self.to(device)
 
-    def build_encoder(self, hidden_sizes, input_size=None, obs_dim=None, action_dim=None):
+    def build_encoder(self, hidden_sizes, input_size=None, obs_dim=None, action_dim=None, continuous=False):
+
         if obs_dim is not None and action_dim is not None:
             input_size = obs_dim + action_dim
+        if continuous:
+            output_size = self.obs_dim
+        else:
+            outpus_size = self.obs_dim * self.n_code
         encoder = FlattenMlp(
-            input_size=input_size, output_size=self.obs_dim*self.n_code, hidden_sizes=hidden_sizes
+            input_size=input_size, output_size=output_size, hidden_sizes=hidden_sizes
         )
         return encoder
 
@@ -165,14 +175,18 @@ class POMDP_encoder(nn.Module):
         )  # (T+1, B, dim)
 
         # 4. logits
-        logits = self.encoder(joint_embeds).reshape(joint_embeds.shape[0], joint_embeds.shape[1],
-                                                    self.obs_dim, self.n_code)
+        if self.continuous:
+            logits = self.encoder(joint_embeds)
+            return logits, logits, mask
+        else:
+            logits = self.encoder(joint_embeds).reshape(joint_embeds.shape[0], joint_embeds.shape[1],
+                                                        self.obs_dim, self.n_code)
 
-        predicted_codes = logits.argmax(dim=-1).reshape(joint_embeds.shape[0], joint_embeds.shape[1],
-                                                    self.obs_dim)
+            predicted_codes = logits.argmax(dim=-1).reshape(joint_embeds.shape[0], joint_embeds.shape[1],
+                                                        self.obs_dim)
 
 
-        return logits, predicted_codes, mask
+            return logits, predicted_codes, mask
 
 
 
@@ -180,8 +194,10 @@ class POMDP_encoder(nn.Module):
         labels = labels.unsqueeze(dim=-1)
         logits, predicted_codes, mask = self.forward(prev_actions, rewards, observs, mask_scheme)
 
-
-        loss = self.loss_fn(logits[mask], labels[mask].long().reshape(-1))
+        if self.continuous:
+            loss = self.loss_fn(logits[mask], labels[mask].float().reshape(-1))
+        else:
+            loss = self.loss_fn(logits[mask], labels[mask].long().reshape(-1))
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -209,9 +225,14 @@ class POMDP_encoder(nn.Module):
 
         joint_embeds = torch.cat((hidden_state, shortcut_obs_emb), dim=-1)  # (1, 1, dim)
 
-        logits = self.encoder(joint_embeds).reshape(1, 1, self.obs_dim, self.n_code)
 
-        predicted_codes = logits.argmax(dim=-1).reshape(1, 1, self.obs_dim)
+
+        if self.continuous:
+            logits = self.encoder(joint_embeds).reshape(1, 1, self.obs_dim)
+            predicted_codes = logits
+        else:
+            logits = self.encoder(joint_embeds).reshape(1, 1, self.obs_dim, self.n_code)
+            predicted_codes = logits.argmax(dim=-1).reshape(1, 1, self.obs_dim)
 
         if v2:
            result, predicted_codes  = self.obs_discretizer.get_predicted_emb(obs, predicted_codes, mask)

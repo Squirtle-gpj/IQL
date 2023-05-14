@@ -58,6 +58,7 @@ def main(config):
         reward_discretizer=None,
         obs_discretizer=discretizer,
         max_steps=config.n_steps,
+        continuous=config.continuous,
     )
 
     observation_manager = ObservationManager(obs_dim=obs_dim, env_name=config.env_code)
@@ -106,6 +107,7 @@ if __name__ == '__main__':
     parser = get_parser(['default'])
     parser.add_argument('--env_name', required=True)
     parser.add_argument('--env_code', required=True)
+    parser.add_argument('--continuous', action='store_true')
     parser.add_argument('--deterministic_policy', action='store_true')
     parser.add_argument("--n_code", default=50, help="", type=int)
     parser.add_argument("--policy_path", default='/home/pengjie/Experiments/test_vae_policy/Checkpoints/test_code10_1234/best.pt', help="", type=str)
