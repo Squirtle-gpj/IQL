@@ -119,7 +119,7 @@ class POMDP_encoder(nn.Module):
         if continuous:
             output_size = self.obs_dim
         else:
-            outpus_size = self.obs_dim * self.n_code
+            output_size = self.obs_dim * self.n_code
         encoder = FlattenMlp(
             input_size=input_size, output_size=output_size, hidden_sizes=hidden_sizes
         )

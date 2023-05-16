@@ -80,24 +80,39 @@ def get_env_and_dataset(env_name, max_episode_steps, sample_seq_length=None, cod
         return env, dataset, None
 
 
-def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True, v2=False, padding_zero=False):
+def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_recurrent=False, deterministic=False, use_obs_encoder=True, v2=False, padding_zero=False, get_info=False):
     all_results = {}
     total_return_mean = 0
     total_return_std = 0
     total_normalized_return_mean = 0
     total_normalized_return_std = 0
+    all_info = {}
 
     if use_obs_encoder:
          eval_fn = evaluate_policy_obs_encoder
-         eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
-                                          {'observable_type': 'full', 'name': 'full'},
-                                          encoder_recurrent=False,
-                                          deterministic=deterministic, v2=v2) \
-                                  for _ in range(config.n_eval_episodes)])
+         eval_returns = []
+         org = []
+         recon = []
+         for _ in range(config.n_eval_episodes):
+
+             cur_eval_returns, cur_info = eval_fn(env, obs_encoder, policy, config.max_episode_steps,
+                                                  {'observable_type': 'full', 'name': 'full'},
+                                                  encoder_recurrent=False,
+                                                  deterministic=deterministic, v2=v2, get_info=get_info)
+             if get_info:
+                 cur_org = torch.cat(cur_info[0], dim=0).cpu()
+                 cur_recon = torch.cat(cur_info[1], dim=0).cpu()
+                 org.append(cur_org)
+                 recon.append(cur_recon)
+             eval_returns.append(eval_returns)
+         eval_returns = np.array(eval_returns)
+         if get_info:
+             org = torch.cat(org, dim=0)
+             recon = recon.cat(recon, dim=0)
     else:
         obs_encoder = None
         eval_fn = evaluate_policy_pomdp
-        eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
+        eval_returns, info = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
                                          {'observable_type': 'full', 'name': 'full'},
                                          encoder_recurrent=encoder_recurrent,
                                          deterministic=deterministic) \
@@ -115,16 +130,33 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
     }
 
     all_results.update(results)
+    all_info.update({'full':[org, recon]})
 
 
     for i_scheme in range(len(observation_manager.schemes)):
         observation_manager.set_scheme(i_scheme)
 
-        eval_returns = np.array([eval_fn(env, obs_encoder, policy, config.max_episode_steps,
-                                                             observation_manager.get_current_scheme(),
-                                                             encoder_recurrent=encoder_recurrent,
-                                                             deterministic=deterministic, v2=v2) \
-                                 for _ in range(config.n_eval_episodes)])
+        eval_fn = evaluate_policy_obs_encoder
+        eval_returns = []
+        org = []
+        recon = []
+        for _ in range(config.n_eval_episodes):
+            cur_eval_returns, cur_info = eval_fn(env, obs_encoder, policy, config.max_episode_steps,
+                                                 {'observable_type': 'full', 'name': 'full'},
+                                                 encoder_recurrent=False,
+                                                 deterministic=deterministic, v2=v2, get_info=get_info)
+            if get_info:
+                cur_org = torch.cat(cur_info[0], dim=0).cpu()
+                cur_recon = torch.cat(cur_info[1], dim=0).cpu()
+                org.append(cur_org)
+                recon.append(cur_recon)
+            eval_returns.append(eval_returns)
+
+        eval_returns = np.array(eval_returns)
+        if get_info:
+            org = torch.cat(org, dim=0)
+            recon = torch.cat(recon, dim=0)
+
         normalized_returns = d4rl.get_normalized_score(config.env_name, eval_returns) * 100.0
 
         results = {
@@ -148,12 +180,22 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
         'total normalized return std': total_normalized_return_std/len(observation_manager.schemes),
     })
 
-    return all_results
+    all_info.update({observation_manager.get_current_scheme()['name']: [org, recon]})
+
+    if get_info:
+        return all_results, all_info
+    else:
+        return all_results
 
 def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
                                 mask_scheme=None,
                                 encoder_recurrent=False,
-                                deterministic=False, v2=False):
+                                deterministic=False, v2=False, get_info=False):
+    info={}
+    if get_info:
+        org = []
+        recon = []
+
     full_observation = env.reset()
     #full_observation, mask_indices, masked_observation = observation_manager.get_observation(observation)
     if encoder_recurrent:
@@ -170,9 +212,15 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
                                                                                    to_torch(full_observation),
                                                                                    mask_scheme=mask_scheme,
                                                                                    prev_internal_state=prev_internal_state, v2=v2)
+            if get_info:
+                org.append(obs_encoder.obs_discretizer.encode(to_torch(full_observation)).detach())
+                recon.append(encoded_observation.detach())
         else:
             if mask_scheme['observable_type'] == 'full':
                 encoded_observation = obs_encoder.obs_discretizer.encode(to_torch(full_observation))
+                if get_info:
+                    org.append(obs_encoder.obs_discretizer.encode(to_torch(full_observation)).detach())
+                    recon.append(encoded_observation.detach())
             #encoded_observation = obs_encoder.encode(full_observation, mask_scheme)
 
         with torch.no_grad():
@@ -184,13 +232,15 @@ def evaluate_policy_obs_encoder(env, obs_encoder, policy, max_episode_steps,
 
         total_reward += reward
         step += 1
-
-    return total_reward
+    if get_info:
+        info = [org, recon]
+    return total_reward, info
 
 def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
                                 mask_scheme=None,
                                 encoder_recurrent=False,
-                                deterministic=False, v2=False, padding_zero=False):
+                                deterministic=False, v2=False, padding_zero=True, get_info=False):
+    info = {}
     full_observation = env.reset()
     last_observation = torch.zeros(to_torch(full_observation).shape, device='cuda')
     obs_dim = full_observation.shape[0]
@@ -219,6 +269,7 @@ def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
                         full_observation[mask_entry] = 0
                     else:
                         full_observation[mask_entry] = last_observation[mask_entry]
+                        last_observation=full_observation
                 elif observable_type == 'random_episode' or observable_type=='fixed':
                     full_observation[mask_entry] = 0
 
@@ -236,7 +287,7 @@ def evaluate_policy_pomdp(env, obs_encoder, policy, max_episode_steps,
             total_reward += reward
             step += 1
 
-    return total_reward
+    return total_reward, info
 
 class ObservationManager:
     def __init__(self, obs_dim,   env_name='hopper', train_mask_ratio=0.5):
@@ -374,6 +425,11 @@ class ObservationManager:
                 "random": [0.1,  0.3,  0.5, 0.7, 0.9],
                 "P": [0, 1, 2, 3, 4],
                 "V": [5, 6, 7, 8, 9, 10],
+            },
+            "maze": {
+                "random": [0.2, 0.4, 0.6],
+                "P": [0, 1],
+                "V": [2, 3],
             },
             "toy": {
                 "random": [0.1,  0.3,  0.5],

@@ -61,40 +61,16 @@ def main(config):
         continuous=config.continuous,
         use_obs_as_labels=config.use_obs_as_labels,
     )
-
+    pomdp_encoder.load_state_dict(torch.load(config.encoder_path))
     observation_manager = ObservationManager(obs_dim=obs_dim, env_name=config.env_code)
-    for step in trange(config.n_steps):
-        cur_scheme_idx = step % len(observation_manager.schemes)
-        cur_mask_scheme = observation_manager.set_scheme(cur_scheme_idx)
 
-        batch = sample_batch(dataset, config.batch_size, config.sample_seq_length)
-        observations = batch['observations']
-        seq_len, batch_size, _ = observations.shape
-        device = observations.device
-        prev_actions = torch.cat([torch.zeros(1, batch_size, batch['actions'].shape[-1], device=device),
-                                  batch['actions'][:-1]], dim=0)
-        prev_rewards = torch.cat([torch.zeros(1, batch_size, batch['rewards'].shape[-1], device=device),
-                                  batch['rewards'][:-1]], dim=0)
-        labels = torch.tensor(batch['obs_quantile_idx'], dtype=torch.float32)
 
-        results = pomdp_encoder.update(prev_actions, prev_rewards, observations, labels, mask_scheme=cur_mask_scheme)
-        #iql.update()
-        if (step == 0) or ((step + 1) % config.log_period == 0):
-            exp_logger.record_step(step)
-            for k, v in results.items():
-                exp_logger.record_tabular(k, v)
-            exp_logger.dump_tabular()
-
-        if (step == 0) or ((step + 1) % config.eval_period == 0):
-            results = eval_policy(env, pomdp_encoder, policy, config, observation_manager, encoder_recurrent=True, deterministic=True)
-            exp_logger.record_step(step)
-            for k, v in results.items():
-                exp_logger.record_tabular(k, v)
-            exp_logger.dump_tabular()
-            if (step + 1) % config.save_period == 0:
-                torch.save(pomdp_encoder.state_dict(), os.path.join(config.paths['ckpt'], 'final.pt'))
-
-    torch.save(pomdp_encoder.state_dict(), os.path.join(config.paths['ckpt'], 'final.pt'))
+    results, info = eval_policy(env, pomdp_encoder, policy, config, observation_manager, encoder_recurrent=True, deterministic=True, get_info=True)
+    exp_logger.record_step(0)
+    for k, v in results.items():
+        exp_logger.record_tabular(k, v)
+    exp_logger.dump_tabular()
+    torch.save(info, os.path.join(config.paths['Results'], 'info.pt'))
 
 
     # log.close()
@@ -113,6 +89,9 @@ if __name__ == '__main__':
     parser.add_argument('--deterministic_policy', action='store_true')
     parser.add_argument("--n_code", default=50, help="", type=int)
     parser.add_argument("--policy_path", default='/home/pengjie/Experiments/test_vae_policy/Checkpoints/test_code10_1234/best.pt', help="", type=str)
+    parser.add_argument("--encoder_path",
+                        default='/home/pengjie/Experiments/test_vae_policy/Checkpoints/test_code10_1234/best.pt',
+                        help="", type=str)
     args = parser.parse_args()
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.device)
