@@ -70,7 +70,7 @@ def main(config):
     for k, v in results.items():
         exp_logger.record_tabular(k, v)
     exp_logger.dump_tabular()
-    torch.save(info, os.path.join(config.paths['Results'], 'info.pt'))
+    torch.save(info, os.path.join(config.paths['results'], 'info.pt'))
 
 
     # log.close()

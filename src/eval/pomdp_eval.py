@@ -104,11 +104,11 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
                  cur_recon = torch.cat(cur_info[1], dim=0).cpu()
                  org.append(cur_org)
                  recon.append(cur_recon)
-             eval_returns.append(eval_returns)
+             eval_returns.append(cur_eval_returns)
          eval_returns = np.array(eval_returns)
          if get_info:
              org = torch.cat(org, dim=0)
-             recon = recon.cat(recon, dim=0)
+             recon = torch.cat(recon, dim=0)
     else:
         obs_encoder = None
         eval_fn = evaluate_policy_pomdp
@@ -142,15 +142,15 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
         recon = []
         for _ in range(config.n_eval_episodes):
             cur_eval_returns, cur_info = eval_fn(env, obs_encoder, policy, config.max_episode_steps,
-                                                 {'observable_type': 'full', 'name': 'full'},
-                                                 encoder_recurrent=False,
+                                                 observation_manager.get_current_scheme(),
+                                                 encoder_recurrent=encoder_recurrent,
                                                  deterministic=deterministic, v2=v2, get_info=get_info)
             if get_info:
                 cur_org = torch.cat(cur_info[0], dim=0).cpu()
                 cur_recon = torch.cat(cur_info[1], dim=0).cpu()
                 org.append(cur_org)
                 recon.append(cur_recon)
-            eval_returns.append(eval_returns)
+            eval_returns.append(cur_eval_returns)
 
         eval_returns = np.array(eval_returns)
         if get_info:
@@ -167,6 +167,7 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
         }
 
         all_results.update(results)
+        all_info.update({observation_manager.get_current_scheme()['name']: [org, recon]})
 
         total_return_mean += eval_returns.mean()
         total_return_std += eval_returns.std()
@@ -180,7 +181,7 @@ def eval_policy(env, obs_encoder, policy, config, observation_manager, encoder_r
         'total normalized return std': total_normalized_return_std/len(observation_manager.schemes),
     })
 
-    all_info.update({observation_manager.get_current_scheme()['name']: [org, recon]})
+
 
     if get_info:
         return all_results, all_info
